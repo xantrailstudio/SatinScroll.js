@@ -1,22 +1,30 @@
 /**
- * SatinScroll.js
- * Universal Inertia Engine with Smooth Keyboard, Touch, Wheel, and Anchor support.
+ * SatinScroll.js v2.0 (Production Bulletproof Edition)
+ * Universal Inertia Engine with Dynamic Layout Sync, Internal Scroller Support, 
+ * Malformed Anchor Fallbacks, and Zero Memory Leaks.
  */
 (function (window, document) {
     'use strict';
 
     class SatinScroll {
         constructor(options = {}) {
+            // Prevent double-initialization conflicts
+            if (window.satinScrollInstance) {
+                window.satinScrollInstance.destroy();
+            }
+            window.satinScrollInstance = this;
+
             this.settings = Object.assign({
                 lerp: 0.1,             // Scroll inertia dampening
                 wheelMultiplier: 1,    // Wheel speed
                 touchMultiplier: 1.5,  // Touch mobile speed
-                keyMultiplier: 120     // Distance moved per arrow key press
+                keyMultiplier: 120,    // Arrow keys distance
+                anchorDuration: 2000   // Exactly 2 seconds for anchor/button jumps
             }, options);
 
             this.scrollPos = window.pageYOffset;
             this.targetScroll = window.pageYOffset;
-            this.maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+            this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
             
             this.isDraggingTouch = false;
             this.touchStartY = 0;
@@ -25,7 +33,19 @@
             this.hashStartTime = 0;
             this.hashStartPos = 0;
             this.hashTargetPos = 0;
-            this.hashDuration = 2000; // Exactly 2 seconds for any button/anchor jump
+
+            // Bind methods explicitly to ensure proper memory cleanup on destroy
+            this.boundWheel = this.handleWheel.bind(this);
+            this.boundKeydown = this.handleKeydown.bind(this);
+            this.boundTouchStart = this.handleTouchStart.bind(this);
+            this.boundTouchMove = this.handleTouchMove.bind(this);
+            this.boundTouchEnd = this.handleTouchEnd.bind(this);
+            this.boundScroll = this.handleScroll.bind(this);
+            this.boundResize = this.handleResize.bind(this);
+            this.boundClick = this.handleClick.bind(this);
+            this.boundThumbMouseDown = this.handleThumbMouseDown.bind(this);
+            this.boundMouseMove = this.handleMouseMove.bind(this);
+            this.boundMouseUp = this.handleMouseUp.bind(this);
 
             this.init();
         }
@@ -34,110 +54,130 @@
             this.injectStyles();
             this.createCustomScrollbar();
 
-            window.addEventListener('resize', () => {
-                this.maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-                this.updateThumb();
-            });
+            window.addEventListener('resize', this.boundResize);
+            window.addEventListener('scroll', this.boundScroll, { passive: true });
+            window.addEventListener('wheel', this.boundWheel, { passive: false });
+            window.addEventListener('keydown', this.boundKeydown);
+            window.addEventListener('touchstart', this.boundTouchStart, { passive: true });
+            window.addEventListener('touchmove', this.boundTouchMove, { passive: false });
+            window.addEventListener('touchend', this.boundTouchEnd, { passive: true });
+            document.addEventListener('click', this.boundClick);
 
-            // Sync with browser native scrolls (like Ctrl+F text searches)
-            window.addEventListener('scroll', () => {
-                if (this.isInternalScroll || this.isAnimatingHash) return;
-                
-                const currentY = window.pageYOffset;
-                if (Math.abs(currentY - this.scrollPos) > 2) {
-                    this.scrollPos = currentY;
-                    this.targetScroll = currentY;
-                }
-            });
-
-            // 1. Wheel (Mouse & Trackpad)
-            window.addEventListener('wheel', (e) => {
-                if (this.isAnimatingHash) return;
-                e.preventDefault();
-                this.targetScroll += e.deltaY * this.settings.wheelMultiplier;
-                this.clampTarget();
-            }, { passive: false });
-
-            // 2. Keyboard Navigation (Arrows, Page Up/Down, Spacebar)
-            window.addEventListener('keydown', (e) => {
-                if (this.isAnimatingHash) return;
-                
-                // Don't interfere if user is typing in an input or textarea
-                if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
-
-                let scrollAmount = 0;
-
-                switch (e.key) {
-                    case 'ArrowDown':
-                        scrollAmount = this.settings.keyMultiplier;
-                        break;
-                    case 'ArrowUp':
-                        scrollAmount = -this.settings.keyMultiplier;
-                        break;
-                    case 'PageDown':
-                        scrollAmount = window.innerHeight * 0.85;
-                        break;
-                    case 'PageUp':
-                        scrollAmount = -window.innerHeight * 0.85;
-                        break;
-                    case ' ': // Spacebar
-                        scrollAmount = e.shiftKey ? -window.innerHeight * 0.85 : window.innerHeight * 0.85;
-                        break;
-                    default:
-                        return; // Exit if it's not a scroll key
-                }
-
-                e.preventDefault();
-                this.targetScroll += scrollAmount;
-                this.clampTarget();
-            });
-
-            // 3. Touch Gestures
-            window.addEventListener('touchstart', (e) => {
-                if (this.isAnimatingHash) return;
-                this.isDraggingTouch = true;
-                this.touchStartY = e.touches[0].clientY;
-            }, { passive: true });
-
-            window.addEventListener('touchmove', (e) => {
-                if (!this.isDraggingTouch || this.isAnimatingHash) return;
-                e.preventDefault();
-                const deltaY = this.touchStartY - e.touches[0].clientY;
-                this.touchStartY = e.touches[0].clientY;
-                this.targetScroll += deltaY * this.settings.touchMultiplier;
-                this.clampTarget();
-            }, { passive: false });
-
-            window.addEventListener('touchend', () => {
-                this.isDraggingTouch = false;
-            }, { passive: true });
-
-            // 4. Buttons & Anchor Links (Forces exact 2-Second Duration)
-            document.addEventListener('click', (e) => {
-                const targetAnchor = e.target.closest('a[href^="#"]');
-                if (!targetAnchor) return;
-
-                const hash = targetAnchor.getAttribute('href');
-                if (hash === '#' || hash.length === 1) return;
-
-                const targetElement = document.querySelector(hash);
-                if (targetElement) {
-                    e.preventDefault();
-                    const targetPos = targetElement.getBoundingClientRect().top + window.pageYOffset;
-                    this.startHashAnimation(targetPos);
-                    window.history.pushState(null, null, hash);
-                }
-            });
+            // Observe dynamic layout height modifications automatically
+            if (window.ResizeObserver) {
+                this.resizeObserver = new ResizeObserver(() => {
+                    this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+                    this.updateThumb();
+                });
+                this.resizeObserver.observe(document.body);
+            }
 
             this.rafId = requestAnimationFrame(this.render.bind(this));
         }
 
+        handleWheel(e) {
+            if (this.isAnimatingHash) return;
+
+            // Allow normal scrolling inside internal scrollable containers (modals, dropdowns, code boxes)
+            let el = e.target;
+            while (el && el !== document.body && el !== document.documentElement) {
+                const style = window.getComputedStyle(el);
+                const overflowY = style.overflowY;
+                if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+                    return; 
+                }
+                el = el.parentElement;
+            }
+
+            e.preventDefault();
+            this.targetScroll += e.deltaY * this.settings.wheelMultiplier;
+            this.clampTarget();
+        }
+
+        handleKeydown(e) {
+            if (this.isAnimatingHash) return;
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+
+            let scrollAmount = 0;
+            switch (e.key) {
+                case 'ArrowDown': scrollAmount = this.settings.keyMultiplier; break;
+                case 'ArrowUp': scrollAmount = -this.settings.keyMultiplier; break;
+                case 'PageDown': scrollAmount = window.innerHeight * 0.85; break;
+                case 'PageUp': scrollAmount = -window.innerHeight * 0.85; break;
+                case ' ': scrollAmount = e.shiftKey ? -window.innerHeight * 0.85 : window.innerHeight * 0.85; break;
+                default: return;
+            }
+
+            e.preventDefault();
+            this.targetScroll += scrollAmount;
+            this.clampTarget();
+        }
+
+        handleTouchStart(e) {
+            if (this.isAnimatingHash) return;
+            this.isDraggingTouch = true;
+            this.touchStartY = e.touches[0].clientY;
+        }
+
+        handleTouchMove(e) {
+            if (!this.isDraggingTouch || this.isAnimatingHash) return;
+            e.preventDefault();
+            const deltaY = this.touchStartY - e.touches[0].clientY;
+            this.touchStartY = e.touches[0].clientY;
+            this.targetScroll += deltaY * this.settings.touchMultiplier;
+            this.clampTarget();
+        }
+
+        handleTouchEnd() {
+            this.isDraggingTouch = false;
+        }
+
+        handleScroll() {
+            if (this.isInternalScroll || this.isAnimatingHash) return;
+            const currentY = window.pageYOffset;
+            if (Math.abs(currentY - this.scrollPos) > 2) {
+                this.scrollPos = currentY;
+                this.targetScroll = currentY;
+            }
+        }
+
+        handleResize() {
+            this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+            this.updateThumb();
+        }
+
+        handleClick(e) {
+            const targetAnchor = e.target.closest('a[href^="#"]');
+            if (!targetAnchor) return;
+
+            const hash = targetAnchor.getAttribute('href');
+            if (hash === '#' || hash.length <= 1) return;
+
+            let targetElement = null;
+            try {
+                targetElement = document.querySelector(hash);
+            } catch (err) {
+                // Safe fallback for malformed selectors (e.g., IDs starting with a number)
+                const cleanId = hash.replace(/^#/, '');
+                targetElement = document.getElementById(cleanId);
+            }
+
+            if (targetElement) {
+                e.preventDefault();
+                const targetPos = targetElement.getBoundingClientRect().top + window.pageYOffset;
+                this.startHashAnimation(targetPos);
+                try {
+                    window.history.pushState(null, null, hash);
+                } catch (err) {}
+            }
+        }
+
         injectStyles() {
+            if (document.getElementById('satin-scroll-styles')) return;
             const style = document.createElement('style');
+            style.id = 'satin-scroll-styles';
             style.innerHTML = `
-                /* Hide default scrollbar for Chrome, Safari and Opera */
                 ::-webkit-scrollbar { display: none; }
-                /* Hide default scrollbar for IE, Edge and Firefox */
                 html { -ms-overflow-style: none; scrollbar-width: none; }
 
                 #satin-scrollbar-track {
@@ -176,40 +216,61 @@
             track.appendChild(thumb);
             document.body.appendChild(track);
 
-            let isDraggingThumb = false;
-            let startY = 0;
-            let startScrollTop = 0;
-
-            thumb.addEventListener('mousedown', (e) => {
-                isDraggingThumb = true;
-                startY = e.clientY;
-                startScrollTop = this.targetScroll;
-                document.body.style.userSelect = 'none';
-            });
-
-            window.addEventListener('mousemove', (e) => {
-                if (!isDraggingThumb) return;
-                const deltaY = e.clientY - startY;
-                const trackHeight = window.innerHeight - thumb.clientHeight;
-                const scrollRatio = deltaY / trackHeight;
-                this.targetScroll = startScrollTop + (scrollRatio * this.maxScroll);
-                this.clampTarget();
-            });
-
-            window.addEventListener('mouseup', () => {
-                isDraggingThumb = false;
-                document.body.style.userSelect = '';
-            });
-
+            this.trackElement = track;
             this.thumbElement = thumb;
+
+            this.isDraggingThumb = false;
+            this.thumbStartY = 0;
+            this.startScrollTop = 0;
+
+            thumb.addEventListener('mousedown', this.boundThumbMouseDown);
+            window.addEventListener('mousemove', this.boundMouseMove);
+            window.addEventListener('mouseup', this.boundMouseUp);
+        }
+
+        handleThumbMouseDown(e) {
+            this.isDraggingThumb = true;
+            this.thumbStartY = e.clientY;
+            this.startScrollTop = this.targetScroll;
+            document.body.style.userSelect = 'none';
+        }
+
+        handleMouseMove(e) {
+            if (!this.isDraggingThumb || !this.thumbElement || !this.trackElement) return;
+            const deltaY = e.clientY - this.thumbStartY;
+            const trackHeight = window.innerHeight - this.thumbElement.clientHeight;
+            if (trackHeight <= 0) return;
+            const scrollRatio = deltaY / trackHeight;
+            this.targetScroll = this.startScrollTop + (scrollRatio * this.maxScroll);
+            this.clampTarget();
+        }
+
+        handleMouseUp() {
+            if (this.isDraggingThumb) {
+                this.isDraggingThumb = false;
+                document.body.style.userSelect = '';
+            }
         }
 
         updateThumb() {
-            if (!this.thumbElement) return;
+            if (!this.thumbElement || !this.trackElement) return;
+
+            // Hide scrollbar if content is not scrollable (prevents division by zero / NaN)
+            if (this.maxScroll <= 0) {
+                this.trackElement.style.display = 'none';
+                return;
+            } else {
+                this.trackElement.style.display = 'block';
+            }
+
             const docHeight = document.documentElement.scrollHeight;
             const winHeight = window.innerHeight;
             const thumbHeight = Math.max((winHeight / docHeight) * winHeight, 30);
-            const thumbTop = (this.scrollPos / (docHeight - winHeight)) * (winHeight - thumbHeight);
+            const scrollableDistance = docHeight - winHeight;
+            
+            if (scrollableDistance <= 0) return;
+            
+            const thumbTop = (this.scrollPos / scrollableDistance) * (winHeight - thumbHeight);
 
             this.thumbElement.style.height = `${thumbHeight}px`;
             this.thumbElement.style.transform = `translateY(${thumbTop}px)`;
@@ -225,9 +286,9 @@
         render(currentTime) {
             if (this.isAnimatingHash) {
                 const elapsed = currentTime - this.hashStartTime;
-                const progress = Math.min(elapsed / this.hashDuration, 1);
+                const progress = Math.min(elapsed / this.settings.anchorDuration, 1);
                 
-                // Ease-in-out cubic for smooth 2-second transition
+                // Ease-in-out cubic for exact 2-second transition
                 const ease = progress < 0.5 
                     ? 4 * progress * progress * progress 
                     : (progress - 1) * (2 * progress - 2) * (2 * progress - 2) + 1;
@@ -253,19 +314,47 @@
         }
 
         clampTarget() {
+            this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
             this.targetScroll = Math.max(0, Math.min(this.targetScroll, this.maxScroll));
         }
 
         destroy() {
             cancelAnimationFrame(this.rafId);
+
+            window.removeEventListener('resize', this.boundResize);
+            window.removeEventListener('scroll', this.boundScroll);
+            window.removeEventListener('wheel', this.boundWheel);
+            window.removeEventListener('keydown', this.boundKeydown);
+            window.removeEventListener('touchstart', this.boundTouchStart);
+            window.removeEventListener('touchmove', this.boundTouchMove);
+            window.removeEventListener('touchend', this.boundTouchEnd);
+            document.removeEventListener('click', this.boundClick);
+
+            if (this.thumbElement) {
+                this.thumbElement.removeEventListener('mousedown', this.boundThumbMouseDown);
+            }
+            window.removeEventListener('mousemove', this.boundMouseMove);
+            window.removeEventListener('mouseup', this.boundMouseUp);
+
+            if (this.resizeObserver) {
+                this.resizeObserver.disconnect();
+            }
+
             document.getElementById('satin-scrollbar-track')?.remove();
+            document.getElementById('satin-scroll-styles')?.remove();
+
+            if (window.satinScrollInstance === this) {
+                window.satinScrollInstance = null;
+            }
         }
     }
 
     window.SatinScroll = SatinScroll;
 
     document.addEventListener('DOMContentLoaded', () => {
-        window.satinScrollInstance = new SatinScroll();
+        if (!window.satinScrollInstance) {
+            window.satinScrollInstance = new SatinScroll();
+        }
     });
 
 })(window, document);
