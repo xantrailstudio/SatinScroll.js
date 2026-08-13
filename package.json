@@ -1,0 +1,14 @@
+{
+  "name": "satinscroll",
+  "version": "1.0.0",
+  "description": "A universal, zero-dependency buttery-smooth inertia scrolling library.",
+  "main": "satinscroll.js",
+  "keywords": [
+    "smooth-scroll",
+    "inertia",
+    "momentum",
+    "scroll-library"
+  ],
+  "author": "AbdulAziz Memon (Xantrail Studio)",
+  "license": "MIT"
+}
