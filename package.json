@@ -1,6 +1,6 @@
 {
   "name": "satinscroll",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "A universal, zero-dependency buttery-smooth inertia scrolling library.",
   "main": "satinscroll.js",
   "keywords": [
