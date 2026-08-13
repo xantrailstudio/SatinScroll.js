@@ -1,6 +1,3 @@
-Welcome file
-Welcome file
-
 # SatinScroll.js
 
 A universal, zero-dependency buttery-smooth inertia scrolling library designed for modern web applications.

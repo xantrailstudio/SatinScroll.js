@@ -1,25 +1,24 @@
 /**
- * SatinScroll.js v2.0 (Production Bulletproof Edition)
- * Universal Inertia Engine with Dynamic Layout Sync, Internal Scroller Support, 
- * Malformed Anchor Fallbacks, and Zero Memory Leaks.
+ * SatinScroll.js v2.2 (Ultra-Fluid Performance Edition)
+ * Fixed scrollbar bottom locking, instant-response wheel scaling, 
+ * and perfect proportional thumb dragging.
  */
 (function (window, document) {
     'use strict';
 
     class SatinScroll {
         constructor(options = {}) {
-            // Prevent double-initialization conflicts
             if (window.satinScrollInstance) {
                 window.satinScrollInstance.destroy();
             }
             window.satinScrollInstance = this;
 
             this.settings = Object.assign({
-                lerp: 0.1,             // Scroll inertia dampening
-                wheelMultiplier: 1,    // Wheel speed
-                touchMultiplier: 1.5,  // Touch mobile speed
-                keyMultiplier: 120,    // Arrow keys distance
-                anchorDuration: 2000   // Exactly 2 seconds for anchor/button jumps
+                lerp: 0.2,             // Snappy, high-performance response weight
+                wheelMultiplier: 1.5,  // Fast, responsive wheel translation
+                touchMultiplier: 2.0,  // Instant mobile touch tracking
+                keyMultiplier: 400,    // High-speed arrow key leaps
+                anchorDuration: 800    // Quick 0.8s anchor jump
             }, options);
 
             this.scrollPos = window.pageYOffset;
@@ -34,7 +33,6 @@
             this.hashStartPos = 0;
             this.hashTargetPos = 0;
 
-            // Bind methods explicitly to ensure proper memory cleanup on destroy
             this.boundWheel = this.handleWheel.bind(this);
             this.boundKeydown = this.handleKeydown.bind(this);
             this.boundTouchStart = this.handleTouchStart.bind(this);
@@ -63,11 +61,9 @@
             window.addEventListener('touchend', this.boundTouchEnd, { passive: true });
             document.addEventListener('click', this.boundClick);
 
-            // Observe dynamic layout height modifications automatically
             if (window.ResizeObserver) {
                 this.resizeObserver = new ResizeObserver(() => {
-                    this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-                    this.updateThumb();
+                    this.updateMetrics();
                 });
                 this.resizeObserver.observe(document.body);
             }
@@ -75,10 +71,14 @@
             this.rafId = requestAnimationFrame(this.render.bind(this));
         }
 
+        updateMetrics() {
+            this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+            this.updateThumb();
+        }
+
         handleWheel(e) {
             if (this.isAnimatingHash) return;
 
-            // Allow normal scrolling inside internal scrollable containers (modals, dropdowns, code boxes)
             let el = e.target;
             while (el && el !== document.body && el !== document.documentElement) {
                 const style = window.getComputedStyle(el);
@@ -90,7 +90,13 @@
             }
 
             e.preventDefault();
-            this.targetScroll += e.deltaY * this.settings.wheelMultiplier;
+            
+            // Normalize wheel delta across browsers (Firefox vs Chrome)
+            let delta = e.deltaY;
+            if (e.deltaMode === 1) delta *= 40; // Line mode
+            if (e.deltaMode === 2) delta *= window.innerHeight; // Page mode
+
+            this.targetScroll += delta * this.settings.wheelMultiplier;
             this.clampTarget();
         }
 
@@ -102,9 +108,9 @@
             switch (e.key) {
                 case 'ArrowDown': scrollAmount = this.settings.keyMultiplier; break;
                 case 'ArrowUp': scrollAmount = -this.settings.keyMultiplier; break;
-                case 'PageDown': scrollAmount = window.innerHeight * 0.85; break;
-                case 'PageUp': scrollAmount = -window.innerHeight * 0.85; break;
-                case ' ': scrollAmount = e.shiftKey ? -window.innerHeight * 0.85 : window.innerHeight * 0.85; break;
+                case 'PageDown': scrollAmount = window.innerHeight * 0.9; break;
+                case 'PageUp': scrollAmount = -window.innerHeight * 0.9; break;
+                case ' ': scrollAmount = e.shiftKey ? -window.innerHeight * 0.9 : window.innerHeight * 0.9; break;
                 default: return;
             }
 
@@ -142,8 +148,7 @@
         }
 
         handleResize() {
-            this.maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-            this.updateThumb();
+            this.updateMetrics();
         }
 
         handleClick(e) {
@@ -157,7 +162,6 @@
             try {
                 targetElement = document.querySelector(hash);
             } catch (err) {
-                // Safe fallback for malformed selectors (e.g., IDs starting with a number)
                 const cleanId = hash.replace(/^#/, '');
                 targetElement = document.getElementById(cleanId);
             }
@@ -184,25 +188,27 @@
                     position: fixed;
                     top: 0;
                     right: 0;
-                    width: 8px;
+                    width: 10px;
                     height: 100vh;
-                    background: rgba(0, 0, 0, 0.05);
+                    background: rgba(0, 0, 0, 0.03);
                     z-index: 99999;
                     pointer-events: none;
                 }
                 #satin-scrollbar-thumb {
                     position: absolute;
                     top: 0;
-                    right: 0;
+                    right: 1px;
                     width: 8px;
-                    background: rgba(0, 0, 0, 0.3);
+                    background: rgba(2, 132, 199, 0.6);
                     border-radius: 4px;
                     pointer-events: auto;
                     cursor: pointer;
-                    transition: background 0.2s;
+                    transition: background 0.2s, width 0.2s;
                 }
                 #satin-scrollbar-thumb:hover {
-                    background: rgba(0, 0, 0, 0.5);
+                    background: rgba(2, 132, 199, 0.9);
+                    width: 10px;
+                    right: 0px;
                 }
             `;
             document.head.appendChild(style);
@@ -233,14 +239,22 @@
             this.thumbStartY = e.clientY;
             this.startScrollTop = this.targetScroll;
             document.body.style.userSelect = 'none';
+            e.preventDefault();
         }
 
         handleMouseMove(e) {
-            if (!this.isDraggingThumb || !this.thumbElement || !this.trackElement) return;
+            if (!this.isDraggingThumb || !this.thumbElement) return;
+            
+            const winHeight = window.innerHeight;
+            const thumbHeight = this.thumbElement.clientHeight;
+            const availableTrackSpace = winHeight - thumbHeight;
+
+            if (availableTrackSpace <= 0) return;
+
             const deltaY = e.clientY - this.thumbStartY;
-            const trackHeight = window.innerHeight - this.thumbElement.clientHeight;
-            if (trackHeight <= 0) return;
-            const scrollRatio = deltaY / trackHeight;
+            // Map pixel movement ratio directly to maximum scroll limits
+            const scrollRatio = deltaY / availableTrackSpace;
+            
             this.targetScroll = this.startScrollTop + (scrollRatio * this.maxScroll);
             this.clampTarget();
         }
@@ -255,7 +269,8 @@
         updateThumb() {
             if (!this.thumbElement || !this.trackElement) return;
 
-            // Hide scrollbar if content is not scrollable (prevents division by zero / NaN)
+            this.updateMetrics();
+
             if (this.maxScroll <= 0) {
                 this.trackElement.style.display = 'none';
                 return;
@@ -265,12 +280,13 @@
 
             const docHeight = document.documentElement.scrollHeight;
             const winHeight = window.innerHeight;
-            const thumbHeight = Math.max((winHeight / docHeight) * winHeight, 30);
-            const scrollableDistance = docHeight - winHeight;
             
-            if (scrollableDistance <= 0) return;
+            // Accurate proportions ensuring thumb never overflows track bounds
+            const thumbHeight = Math.max((winHeight / docHeight) * winHeight, 40);
+            const availableTrackSpace = winHeight - thumbHeight;
             
-            const thumbTop = (this.scrollPos / scrollableDistance) * (winHeight - thumbHeight);
+            const scrollPercent = this.maxScroll > 0 ? (this.scrollPos / this.maxScroll) : 0;
+            const thumbTop = scrollPercent * availableTrackSpace;
 
             this.thumbElement.style.height = `${thumbHeight}px`;
             this.thumbElement.style.transform = `translateY(${thumbTop}px)`;
@@ -288,7 +304,6 @@
                 const elapsed = currentTime - this.hashStartTime;
                 const progress = Math.min(elapsed / this.settings.anchorDuration, 1);
                 
-                // Ease-in-out cubic for exact 2-second transition
                 const ease = progress < 0.5 
                     ? 4 * progress * progress * progress 
                     : (progress - 1) * (2 * progress - 2) * (2 * progress - 2) + 1;
@@ -300,7 +315,6 @@
                     this.isAnimatingHash = false;
                 }
             } else {
-                // Standard Lerp for Inertia
                 this.scrollPos += (this.targetScroll - this.scrollPos) * this.settings.lerp;
             }
 
@@ -353,7 +367,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         if (!window.satinScrollInstance) {
-            window.satinScrollInstance = new SatinScroll();
+            window.satinScrollInstance = new SatingScroll || new SatinScroll();
         }
     });
 
